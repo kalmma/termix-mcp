@@ -23,11 +23,16 @@ This is a community/unofficial project, not affiliated with the Termix team.
 | `get_tunnel_status` | Status of one tunnel |
 | `connect_ssh_tunnel` | Start a configured tunnel |
 | `disconnect_ssh_tunnel` | Stop a tunnel |
-| `establish_docker_session` | Open a Docker-over-SSH session on a host |
-| `list_docker_containers` | List containers on that session |
-| `start_docker_container` / `stop_docker_container` / `restart_docker_container` | Control a container |
 | `get_recent_activity` | Recent activity log |
 | `get_active_alerts` / `get_dismissed_alerts` | Alert status |
+
+Docker container management (list/start/stop/restart) is **not** exposed as
+tools: on the live backend it runs over a stateful SSH-session +
+Socket.IO channel, not plain REST request/response, so it doesn't fit this
+server's simple per-tool model. It was removed after being verified against
+the actual Termix backend source (see "Notes & caveats" below) — the earlier
+version of this README advertised it, but it never actually worked against
+a real instance.
 
 ## Requirements
 
@@ -87,9 +92,27 @@ cp .env.example .env
 ```
 
 `TERMIX_BASE_URL` is the base URL of the Termix **backend API**, not the
-web UI — check the docs for your deployment (for a default local Docker
-install this is typically `http://localhost:30001`; adjust if you've
-changed ports or are running behind a reverse proxy).
+web UI — for a default local Docker install this is typically
+`http://localhost:30001`; adjust if you've changed ports or are running
+behind a reverse proxy.
+
+Termix's backend is actually split across several independent services on
+different ports, confirmed by reading the Termix backend source directly
+(the hosted API docs return 403 to automated fetches, and didn't fully
+match what a live v2.5.0 instance actually does):
+
+| Service | Default port | Used for |
+|---|---|---|
+| main API | 30001 (`TERMIX_BASE_URL`) | SSH hosts CRUD, alerts |
+| metrics API | 30005 (`TERMIX_METRICS_URL`) | host online/offline status, live metrics |
+| dashboard API | 30006 (`TERMIX_DASHBOARD_URL`) | recent activity log |
+| tunnel API | 30003 (`TERMIX_TUNNEL_URL`) | SSH tunnel status/connect/disconnect |
+
+You only need to set `TERMIX_BASE_URL` (+ `TERMIX_API_KEY`) — the other
+three default to the same host as `TERMIX_BASE_URL` with the port swapped,
+which matches a stock Termix deployment. Only set them explicitly if your
+setup exposes these services on different hosts/ports (e.g. behind a
+reverse proxy with custom routing).
 
 ### Run it directly
 
@@ -135,23 +158,27 @@ in the MCP server config, per the Claude Code docs.
 
 ## Notes & caveats
 
-- This was built from the public Termix API reference at
-  <https://docs.termix.site/api/termix-api>. Most endpoints used here
-  (SSH hosts, statuses, metrics, tunnels, activity) were verified directly
-  against that reference. A few (Docker session establishment, alerts,
-  and the exact `create_ssh_host`/`update_ssh_host` body schema) are
-  inferred from naming conventions and REST patterns and were **not**
-  individually confirmed — check the live docs for your Termix version
-  before relying on them in production, and adjust `src/termix-client.js`
-  if a path or body shape has changed.
+- All endpoints currently wired up (`/host/db/host`, `/status`,
+  `/metrics/:id`, `/ssh/tunnel/*`, `/activity/recent`, `/alerts`) were
+  individually verified against a live Termix v2.5.0 instance — both by
+  reading the actual backend route definitions in the
+  [Termix source](https://github.com/Termix-SSH/Termix/tree/main/src/backend)
+  and by making real authenticated requests. The hosted API docs
+  (`docs.termix.site`) return 403 to automated fetches and, in an earlier
+  version of this project, some assumed paths/ports turned out wrong when
+  checked against the real backend — trust the source + your own live
+  instance over the docs site if they disagree.
 - `create_ssh_host` accepts a free-form JSON object for the host body
   because the schema varies a lot depending on auth type (password, key,
-  credential reference, Tailscale, etc.) — see the Termix docs / JSON
-  import format page for the full field list.
-- Destructive tools (`delete_ssh_host`, `disconnect_ssh_tunnel`, container
-  stop/restart) are exposed as regular tools with no extra confirmation
-  step built in — if you're wiring this into an agent that acts
-  autonomously, consider gating those in your client/agent policy.
+  credential reference, Tailscale, etc.) — inspect an existing host via
+  `get_ssh_host`/`list_ssh_hosts` for a concrete example on your instance.
+  `update_ssh_host`'s body shape wasn't independently verified beyond "same
+  shape as create" — check a real host object first if a field doesn't
+  seem to apply.
+- Destructive tools (`delete_ssh_host`, `disconnect_ssh_tunnel`) are
+  exposed as regular tools with no extra confirmation step built in — if
+  you're wiring this into an agent that acts autonomously, consider gating
+  those in your client/agent policy.
 - No pagination/filtering helpers are included; responses are returned
   as-is from the Termix API.
 
@@ -159,13 +186,19 @@ in the MCP server config, per the Claude Code docs.
 
 Add new endpoints in two steps:
 
-1. Add a method to `termix` in `src/termix-client.js` that calls
-   `termixRequest(method, path, { query, body })`.
+1. Add a method to `termix` in `src/termix-client.js` that calls one of
+   the per-service helpers (`main`, `metrics`, `dashboard`, `tunnel`) with
+   `(method, path, { query, body })` — pick whichever service actually
+   owns that route (see the port table above, or check
+   `src/backend/database/database.ts`'s `app.use(...)` calls and each
+   service file's own `PORT` constant in the
+   [Termix source](https://github.com/Termix-SSH/Termix/tree/main/src/backend)
+   if you're not sure).
 2. Register a `server.tool(...)` in `src/index.js` that calls it.
 
-The full Termix API surface (100+ operations covering credentials, RBAC,
-snippets, file manager, users/OIDC, etc.) is documented at
-<https://docs.termix.site/api/termix-api> if you want to add more tools.
+Don't trust route names/paths from the hosted docs site without checking
+the backend source or a live request first — that's what caused the wrong
+paths this project shipped with initially.
 
 ## License
 

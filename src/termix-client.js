@@ -2,13 +2,32 @@
  * Minimal client for the Termix REST API.
  *
  * Termix (https://github.com/Termix-SSH/Termix) is a self-hosted SSH /
- * server-management tool. Its backend exposes a REST API (documented at
- * https://docs.termix.site/api/termix-api) secured with a Bearer token
- * (JWT or a user-scoped API key created under User Profile -> API Keys).
+ * server-management tool. It is NOT a single service: the backend is split
+ * into several independent Express processes on different ports (confirmed
+ * by reading the Termix backend source, since the hosted API docs return
+ * 403 to automated fetches and didn't fully match a live v2.5.0 instance):
  *
- * Configure via environment variables:
- *   TERMIX_BASE_URL - e.g. http://localhost:30001 or https://termix.example.com
- *   TERMIX_API_KEY  - Bearer token / API key
+ *   - main API      (SSH hosts CRUD, users, credentials, alerts, ...) - default port 30001
+ *   - metrics API   (host online/offline status, live metrics)       - default port 30005
+ *   - dashboard API (recent activity log)                            - default port 30006
+ *   - tunnel API    (SSH tunnel status/connect/disconnect)           - default port 30003
+ *
+ * All of them accept the same Bearer token (JWT or a user-scoped API key
+ * created under User Profile -> API Keys).
+ *
+ * Configure via environment variables (only TERMIX_BASE_URL + TERMIX_API_KEY
+ * are required - the others default to the same host as TERMIX_BASE_URL with
+ * the port swapped, which matches a stock Termix deployment):
+ *   TERMIX_BASE_URL      - main API, e.g. http://localhost:30001
+ *   TERMIX_METRICS_URL   - metrics/status API, default: same host, port 30005
+ *   TERMIX_DASHBOARD_URL - dashboard/activity API, default: same host, port 30006
+ *   TERMIX_TUNNEL_URL    - tunnel API, default: same host, port 30003
+ *   TERMIX_API_KEY       - Bearer token / API key, sent to all of the above
+ *
+ * Docker container management (list/start/stop/restart) is intentionally
+ * NOT exposed here: in the live backend it's done over a stateful
+ * SSH-session + Socket.IO channel, not plain request/response REST calls,
+ * so it doesn't fit this MCP server's simple request-per-tool model.
  */
 
 // Minimal .env loader (no external dependency). Populates process.env from
@@ -48,7 +67,27 @@ function loadDotEnv() {
 
 loadDotEnv();
 
-const BASE_URL = (process.env.TERMIX_BASE_URL || "http://localhost:30001").replace(/\/+$/, "");
+function normalizeBaseUrl(url) {
+  return url.replace(/\/+$/, "");
+}
+
+function urlWithPort(baseUrl, port) {
+  const u = new URL(baseUrl);
+  u.port = String(port);
+  return normalizeBaseUrl(u.toString());
+}
+
+const MAIN_BASE_URL = normalizeBaseUrl(process.env.TERMIX_BASE_URL || "http://localhost:30001");
+const METRICS_BASE_URL = normalizeBaseUrl(
+  process.env.TERMIX_METRICS_URL || urlWithPort(MAIN_BASE_URL, 30005)
+);
+const DASHBOARD_BASE_URL = normalizeBaseUrl(
+  process.env.TERMIX_DASHBOARD_URL || urlWithPort(MAIN_BASE_URL, 30006)
+);
+const TUNNEL_BASE_URL = normalizeBaseUrl(
+  process.env.TERMIX_TUNNEL_URL || urlWithPort(MAIN_BASE_URL, 30003)
+);
+
 const API_KEY = process.env.TERMIX_API_KEY || "";
 
 if (!API_KEY) {
@@ -58,16 +97,17 @@ if (!API_KEY) {
 }
 
 /**
- * Perform a request against the Termix API.
+ * Perform a request against a Termix API service.
  *
+ * @param {string} baseUrl - one of the *_BASE_URL constants above
  * @param {string} method - HTTP method
- * @param {string} path - path starting with "/", e.g. "/ssh/db/host"
+ * @param {string} path - path starting with "/", e.g. "/host/db/host"
  * @param {object} [options]
  * @param {object} [options.query] - query string params
  * @param {object} [options.body] - JSON body for POST/PUT/PATCH
  */
-export async function termixRequest(method, path, { query, body } = {}) {
-  const url = new URL(BASE_URL + path);
+async function request(baseUrl, method, path, { query, body } = {}) {
+  const url = new URL(baseUrl + path);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== null) {
@@ -111,53 +151,42 @@ export async function termixRequest(method, path, { query, body } = {}) {
   return data;
 }
 
+// Backwards-compatible export used by earlier versions of this file.
+export async function termixRequest(method, path, options = {}) {
+  return request(MAIN_BASE_URL, method, path, options);
+}
+
+const main = (method, path, options) => request(MAIN_BASE_URL, method, path, options);
+const metrics = (method, path, options) => request(METRICS_BASE_URL, method, path, options);
+const dashboard = (method, path, options) => request(DASHBOARD_BASE_URL, method, path, options);
+const tunnel = (method, path, options) => request(TUNNEL_BASE_URL, method, path, options);
+
 export const termix = {
-  // --- SSH hosts ---
-  getAllHosts: () => termixRequest("GET", "/ssh/db/host"),
-  getHostById: (id) => termixRequest("GET", `/ssh/db/host/${id}`),
-  createHost: (host) => termixRequest("POST", "/ssh/db/host", { body: host }),
-  updateHost: (id, host) => termixRequest("PUT", `/ssh/db/host/${id}`, { body: host }),
-  deleteHost: (id) => termixRequest("DELETE", `/ssh/db/host/${id}`),
+  // --- SSH hosts (main API, mounted at /host) ---
+  getAllHosts: () => main("GET", "/host/db/host"),
+  getHostById: (id) => main("GET", `/host/db/host/${id}`),
+  createHost: (host) => main("POST", "/host/db/host", { body: host }),
+  updateHost: (id, host) => main("PUT", `/host/db/host/${id}`, { body: host }),
+  deleteHost: (id) => main("DELETE", `/host/db/host/${id}`),
 
-  // --- Server / host status & metrics ---
-  getAllHostStatuses: () => termixRequest("GET", "/status"),
-  getHostStatusById: (id) => termixRequest("GET", `/status/${id}`),
-  getHostMetrics: (id) => termixRequest("GET", `/metrics/${id}`),
+  // --- Server / host status & metrics (separate metrics service) ---
+  getAllHostStatuses: () => metrics("GET", "/status"),
+  getHostStatusById: (id) => metrics("GET", `/status/${id}`),
+  getHostMetrics: (id) => metrics("GET", `/metrics/${id}`),
 
-  // --- SSH tunnels ---
-  getAllTunnelStatuses: () => termixRequest("GET", "/ssh/tunnel/status"),
+  // --- SSH tunnels (separate tunnel service) ---
+  getAllTunnelStatuses: () => tunnel("GET", "/ssh/tunnel/status"),
   getTunnelStatusByName: (name) =>
-    termixRequest("GET", `/ssh/tunnel/status/${encodeURIComponent(name)}`),
+    tunnel("GET", `/ssh/tunnel/status/${encodeURIComponent(name)}`),
   connectTunnel: ({ name, sourceHostId, tunnelIndex }) =>
-    termixRequest("POST", "/ssh/tunnel/connect", { body: { name, sourceHostId, tunnelIndex } }),
+    tunnel("POST", "/ssh/tunnel/connect", { body: { name, sourceHostId, tunnelIndex } }),
   disconnectTunnel: (tunnelName) =>
-    termixRequest("POST", "/ssh/tunnel/disconnect", { body: { tunnelName } }),
+    tunnel("POST", "/ssh/tunnel/disconnect", { body: { tunnelName } }),
 
-  // --- Docker (requires an established SSH session for Docker) ---
-  // NOTE: the exact path/body for session establishment was not directly
-  // confirmed against the live docs UI - verify against
-  // https://docs.termix.site/api/establish-ssh-session-for-docker before relying on it.
-  establishDockerSession: (hostId) =>
-    termixRequest("POST", "/docker/session", { body: { hostId } }),
-  listContainers: (sessionId, all = true) =>
+  // --- Dashboard / activity (separate dashboard service) ---
+  getRecentActivity: (limit) => dashboard("GET", "/activity/recent", { query: { limit } }),
 
-    termixRequest("GET", `/docker/containers/${encodeURIComponent(sessionId)}`, {
-      query: { all },
-    }),
-  startContainer: (sessionId, containerId) =>
-    termixRequest("POST", `/docker/containers/${encodeURIComponent(sessionId)}/${containerId}/start`),
-  stopContainer: (sessionId, containerId) =>
-    termixRequest("POST", `/docker/containers/${encodeURIComponent(sessionId)}/${containerId}/stop`),
-  restartContainer: (sessionId, containerId) =>
-    termixRequest(
-      "POST",
-      `/docker/containers/${encodeURIComponent(sessionId)}/${containerId}/restart`
-    ),
-
-  // --- Dashboard / activity ---
-  getRecentActivity: (limit) => termixRequest("GET", "/activity/recent", { query: { limit } }),
-
-  // --- Alerts ---
-  getActiveAlerts: () => termixRequest("GET", "/alerts/active"),
-  getDismissedAlerts: () => termixRequest("GET", "/alerts/dismissed"),
+  // --- Alerts (main API, mounted at /alerts) ---
+  getActiveAlerts: () => main("GET", "/alerts"),
+  getDismissedAlerts: () => main("GET", "/alerts/dismissed"),
 };

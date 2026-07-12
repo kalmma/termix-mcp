@@ -63,8 +63,9 @@ server.tool(
   "create_ssh_host",
   "Create a new SSH host configuration in Termix. Pass the host object as JSON " +
     "matching the Termix host schema (name, ip, port, username, authType, etc). " +
-    "Check https://docs.termix.site/api/create-ssh-host for the exact fields " +
-    "supported by your Termix version before using this in production.",
+    "Field shape varies by authType (password, key, credential reference, " +
+    "Tailscale, ...) - inspect an existing host via get_ssh_host/list_ssh_hosts " +
+    "for a concrete example on your instance before creating a new one.",
   { host: z.record(z.any()).describe("Host configuration object") },
   async ({ host }) => run(() => termix.createHost(host))
 );
@@ -149,58 +150,12 @@ server.tool(
 );
 
 // ---------------------------------------------------------------------------
-// Docker
+// Docker: not exposed as tools. Confirmed against the live Termix backend
+// source that container management (list/start/stop/restart) runs over a
+// stateful SSH-session + Socket.IO channel, not plain REST request/response
+// - it doesn't fit this server's simple per-tool model, so no docker_* tools
+// are registered rather than shipping ones that would just 404.
 // ---------------------------------------------------------------------------
-
-server.tool(
-  "establish_docker_session",
-  "Establish an SSH session for Docker management on a given host. Returns a " +
-    "sessionId to use with the other docker_* tools. NOTE: verify this endpoint " +
-    "against https://docs.termix.site/api/establish-ssh-session-for-docker " +
-    "for your Termix version, as it may require TOTP verification for some hosts.",
-  { hostId: z.number().int().describe("The SSH host ID to establish a Docker session on") },
-  async ({ hostId }) => run(() => termix.establishDockerSession(hostId))
-);
-
-server.tool(
-  "list_docker_containers",
-  "List Docker containers on a host, using a sessionId from establish_docker_session.",
-  {
-    sessionId: z.string().describe("Docker SSH session ID"),
-    all: z.boolean().optional().describe("Include stopped containers (default true)"),
-  },
-  async ({ sessionId, all }) => run(() => termix.listContainers(sessionId, all ?? true))
-);
-
-server.tool(
-  "start_docker_container",
-  "Start a Docker container.",
-  {
-    sessionId: z.string().describe("Docker SSH session ID"),
-    containerId: z.string().describe("Container ID or name"),
-  },
-  async ({ sessionId, containerId }) => run(() => termix.startContainer(sessionId, containerId))
-);
-
-server.tool(
-  "stop_docker_container",
-  "Stop a Docker container.",
-  {
-    sessionId: z.string().describe("Docker SSH session ID"),
-    containerId: z.string().describe("Container ID or name"),
-  },
-  async ({ sessionId, containerId }) => run(() => termix.stopContainer(sessionId, containerId))
-);
-
-server.tool(
-  "restart_docker_container",
-  "Restart a Docker container.",
-  {
-    sessionId: z.string().describe("Docker SSH session ID"),
-    containerId: z.string().describe("Container ID or name"),
-  },
-  async ({ sessionId, containerId }) => run(() => termix.restartContainer(sessionId, containerId))
-);
 
 // ---------------------------------------------------------------------------
 // Dashboard / alerts
