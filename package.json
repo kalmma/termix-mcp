@@ -8,6 +8,7 @@
     "termix-mcp-server": "src/index.js"
   },
   "scripts": {
+    "setup": "node src/setup.js",
     "start": "node src/index.js",
     "dev": "node --watch src/index.js"
   },

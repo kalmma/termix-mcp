@@ -49,10 +49,18 @@ Verified live against Termix v2.5.0.
    (`dd-mm-jjjj` field — leave blank for a key that doesn't expire).
 6. Click **Create Key**.
 
-**Important:** Termix shows/copies the full key value only once, at
-creation time. If you lose it, you can't retrieve it again — you can only
-delete the key and create a new one. Copy it immediately into your `.env`
-file (or password manager) before closing that dialog.
+**Known quirk:** in the version tested here (v2.5.0), Termix does **not**
+display or let you copy the full key value anywhere in the UI after
+creation — only a short prefix (`tmx_xxxxxxxx…`) is shown, for
+identification only. There's no visible one-time reveal dialog or copy
+button for the full secret. If your version behaves the same way, check
+the [Termix GitHub repo](https://github.com/Termix-SSH/Termix) (issues/
+releases) for the current recommended way to obtain a usable key value —
+this may be a UI gap that gets fixed, or there may be an alternative flow
+(e.g. via the setup wizard, or a config/CLI option) depending on your
+version. A JWT bearer token (obtained by logging in) is a working fallback
+if API keys aren't usable in your version — see the Termix API docs'
+Authentication section for details.
 
 Each key inherits the permissions of the user that created it, and is sent
 as `Authorization: Bearer <key>` on every request — which is exactly what
@@ -64,6 +72,16 @@ this MCP server does (see `TERMIX_API_KEY` below).
 git clone <your-fork-url> termix-mcp
 cd termix-mcp
 npm install
+npm run setup
+```
+
+`npm run setup` runs an interactive prompt that asks for your Termix URL
+and API key, and writes them to a local `.env` file for you (git-ignored,
+so it's never committed). It's the easiest way to get started.
+
+If you'd rather not use the interactive prompt, do it manually instead:
+
+```bash
 cp .env.example .env
 # edit .env and fill in TERMIX_BASE_URL and TERMIX_API_KEY
 ```
@@ -102,7 +120,9 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop afterwards.
+Restart Claude Desktop afterwards. If you already ran `npm run setup`
+(which created a `.env` file), you can omit the `"env"` block entirely —
+the server loads `.env` automatically.
 
 ### Configure in Claude Code
 
