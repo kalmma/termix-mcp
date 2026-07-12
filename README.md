@@ -34,9 +34,29 @@ This is a community/unofficial project, not affiliated with the Termix team.
 - Node.js 18+
 - A running, self-hosted Termix instance (see the
   [Termix install docs](https://docs.termix.site/install/))
-- A Termix API key: log into Termix, go to **User Profile -> API Keys**,
-  and create one. (JWT bearer tokens also work, but API keys are simpler
-  for automation and can be scoped/expired independently of a login session.)
+- A Termix API key (see below)
+
+## Creating a Termix API key
+
+Verified live against Termix v2.5.0.
+
+1. Log into your Termix web UI.
+2. Click your username in the bottom-left corner of the sidebar, then
+   choose **User Profile**.
+3. Open the **API Keys** tab (in the left panel of the User Profile page).
+4. Click **New Key**.
+5. Give it a name (e.g. `mcp-server`) and, optionally, an expiry date
+   (`dd-mm-jjjj` field — leave blank for a key that doesn't expire).
+6. Click **Create Key**.
+
+**Important:** Termix shows/copies the full key value only once, at
+creation time. If you lose it, you can't retrieve it again — you can only
+delete the key and create a new one. Copy it immediately into your `.env`
+file (or password manager) before closing that dialog.
+
+Each key inherits the permissions of the user that created it, and is sent
+as `Authorization: Bearer <key>` on every request — which is exactly what
+this MCP server does (see `TERMIX_API_KEY` below).
 
 ## Setup
 
