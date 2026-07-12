@@ -1,0 +1,29 @@
+{
+  "name": "termix-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for the Termix self-hosted SSH/server-management REST API",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "termix-mcp-server": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "termix",
+    "ssh",
+    "claude"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
